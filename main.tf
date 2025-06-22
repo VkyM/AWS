@@ -7,19 +7,19 @@ provider "aws" {
 # -------------------------------
 
 variable "key_name" {
-  default = "ubuntu"  # 🔑 Replace with your EC2 key pair name
+  default = "<keypair name>"  # 🔑 Replace with your EC2 key pair name
 }
 
 variable "subnet_id" {
-  default = "subnet-0b412973ce5c227d4"  # 🌐 Replace with your subnet ID
+  default = "<subnet-id>"  # 🌐 Replace with your subnet ID
 }
 
 variable "security_group_id" {
-  default = "sg-00c9988b38278efbb"  # 🔒 Replace with your security group ID
+  default = "<sg-id>"  # 🔒 Replace with your security group ID
 }
 
 variable "ami_id" {
-  default = "ami-0f918f7e67a3323f0"  # 🖼️ Ubuntu server 24 AMI for us-east-1
+  default = "<ami-id>"  # 🖼️ Ubuntu server 24 AMI for us-east-1
 }
 
 # -------------------------------
