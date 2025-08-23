@@ -1,55 +1,17 @@
-# Monitoring Stack Deployment on EKS with Persistent Storage (EBS CSI)
+# Setting Up Persistent Prometheus, Grafana, and Loki on EKS with gp3 EBS Storage
 
-This guide explains how to deploy Prometheus, Grafana, and Loki on an Amazon EKS cluster with persistent storage backed by **Amazon EBS CSI Driver**.
-
----
-
-## Prerequisites
-
-- A running **EKS cluster** (`dev-cluster` in this example)
-- **Helm 3** installed
-- **eksctl** and **kubectl** configured
-- IAM permissions to create roles and add-ons
-- We can install after create pvc, skip step1 and step2 (Recommended)
+This guide explains how to enable persistent storage for **Prometheus**, **Grafana**, and **Loki** on an Amazon EKS cluster using **gp3 EBS volumes**. Each step includes an explanation for beginners.
 
 ---
 
-## Step 1: Install Prometheus & Grafana (kube-prometheus-stack)
-
-```bash
-helm install monitoring prometheus-community/kube-prometheus-stack   --namespace monitoring   --create-namespace
-
-# Port-forward Grafana UI
-export POD_NAME=$(kubectl --namespace monitoring get pod -l "app.kubernetes.io/name=grafana,app.kubernetes.io/instance=monitoring" -o name)
-kubectl --namespace monitoring port-forward $POD_NAME 3000
-```
-
----
-
-## Step 2: Install Loki + Promtail
-
-```bash
-helm install loki grafana/loki-stack   --namespace monitoring   --set grafana.enabled=false   --set prometheus.enabled=false   --set promtail.enabled=true
-```
-
-In Grafana, add a **Loki datasource** with URL:
-
-```
-http://loki.monitoring:3100
-```
-
----
-
-## Step 3: Create StorageClass for gp3 Volumes
-
-`gp3-sc.yaml`:
+## 1. Create a StorageClass (`gp3-sc.yaml`)
 
 ```yaml
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: gp3
-provisioner: ebs.csi.aws.com   # <-- must be CSI driver
+provisioner: ebs.csi.aws.com   # <-- Uses AWS EBS CSI driver
 parameters:
   type: gp3
   fsType: ext4
@@ -57,6 +19,16 @@ reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true
 ```
+
+### Explanation:
+
+- **StorageClass**: Defines how Kubernetes should provision storage.
+- **provisioner**: `ebs.csi.aws.com` tells Kubernetes to use the AWS EBS CSI driver.
+- **type**: EBS volume type (`gp3` is performant and cost-efficient).
+- **fsType**: Filesystem type for the volume.
+- **reclaimPolicy**: `Delete` ensures volumes are deleted when PVCs are removed.
+- **volumeBindingMode**: `WaitForFirstConsumer` ensures the volume is created in the same AZ as the pod.
+- **allowVolumeExpansion**: Lets you expand the volume later if needed.
 
 Apply it:
 
@@ -66,47 +38,39 @@ kubectl apply -f gp3-sc.yaml
 
 ---
 
-## Step 4: Configure IAM OIDC Provider
+## 2. Enable IAM OIDC Provider for EKS
 
 ```bash
-eksctl utils associate-iam-oidc-provider   --region ap-south-1   --cluster dev-cluster   --approve
+eksctl utils associate-iam-oidc-provider --region ap-south-1 --cluster dev-cluster --approve
 ```
 
-Verify IAM identity:
+### Explanation:
 
-```bash
-aws sts get-caller-identity --region ap-south-1
-```
-
-Check service account:
-
-```bash
-kubectl -n kube-system get sa ebs-csi-controller-sa -o yaml | grep eks.amazonaws.com/role-arn
-```
+- Enables Kubernetes to use **IAM Roles for Service Accounts (IRSA)**.
+- Required for CSI drivers and other AWS services to access AWS resources securely.
 
 ---
 
-## Step 5: Create IAM Service Account for EBS CSI Driver
+## 3. Install AWS EBS CSI Driver with IRSA
 
 ```bash
-eksctl create iamserviceaccount   --cluster dev-cluster   --region ap-south-1   --namespace kube-system   --name ebs-csi-controller-sa   --role-name dev-cluster-ebs-csi-controller-role   --attach-policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy   --approve
+aws eks create-addon \
+  --cluster-name prod-cluster \
+  --addon-name aws-ebs-csi-driver \
+  --service-account-role-arn arn:aws:iam::<ACCOUNT_ID>:role/prod-cluster-ebs-csi-controller-role \
+  --region ap-south-1
 ```
 
-If already installed, update add-on:
+### Explanation:
 
-```bash
-aws eks delete-addon   --cluster-name dev-cluster   --addon-name aws-ebs-csi-driver   --region ap-south-1
-
-aws eks create-addon   --cluster-name dev-cluster   --addon-name aws-ebs-csi-driver   --service-account-role-arn arn:aws:iam::<ACCOUNT_ID>:role/dev-cluster-ebs-csi-controller-role   --region ap-south-1
-
-aws eks describe-addon   --cluster-name dev-cluster   --addon-name aws-ebs-csi-driver   --region ap-south-1   --query addon.status
-```
+- Installs the **EBS CSI driver** in your cluster.
+- Connects a **Service Account** with an IAM role allowing dynamic volume creation.
 
 ---
 
-## Step 6: Enable Persistence in Prometheus & Grafana
+## 4. Enable Persistence for Prometheus & Grafana
 
-`prometheus.yml`:
+`prometheus.yaml`:
 
 ```yaml
 grafana:
@@ -138,17 +102,26 @@ alertmanager:
               storage: 5Gi
 ```
 
-Upgrade Helm release:
+### Explanation:
+
+- Enables persistent storage for **Grafana, Prometheus, and Alertmanager**.
+- Storage is dynamically provisioned using the `gp3` StorageClass.
+- `ReadWriteOnce` allows one pod to write to the volume at a time.
+
+Install Prometheus stack:
 
 ```bash
-helm upgrade monitoring prometheus-community/kube-prometheus-stack   --namespace monitoring   -f prometheus.yml
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --create-namespace \
+  -f prometheus.yaml
 ```
 
 ---
 
-## Step 7: Enable Persistence in Loki
+## 5. Enable Persistence for Loki
 
-`loki-values.yml`:
+`loki-values.yaml`:
 
 ```yaml
 loki:
@@ -169,43 +142,66 @@ prometheus:
   enabled: false
 ```
 
-Upgrade Helm release:
+### Explanation:
 
-```bash
-helm upgrade loki grafana/loki   --namespace monitoring   -f loki-values.yml
-```
+- Enables persistent storage for **Loki** logs.
+- Disables Grafana and Prometheus from this Helm chart since we already installed them separately.
 
----
-
-## Step 8: Verify Persistence
-
-```bash
-kubectl --namespace monitoring get pods -l "release=monitoring"
-kubectl describe pod <grafana-pod-name> -n monitoring
-kubectl exec -it <grafana-pod-name> -n monitoring -- df -h
-```
-
----
-
-## Step 9: Install prometheus-stack and loki with values (skip if already installed) 
+Install Loki:
 
 ```bash
 helm install loki grafana/loki-stack \
   -n monitoring \
   -f loki-values.yaml
-
-helm install monitoring prometheus-community/kube-prometheus-stack \
-  --namespace monitoring \
-  --create-namespace \
-  -f prometheus-values.yaml
 ```
 
 ---
 
-## ✅ Summary
+## 6. Verify Persistence
 
-- **Prometheus, Grafana, Loki** deployed via Helm
-- **Persistent storage** backed by **EBS CSI gp3 volumes**
-- **OIDC + IAM role** configured for the EBS CSI driver
-- Safe to scale workloads with durable storage
+Check pods:
+
+```bash
+kubectl --namespace monitoring get pods -l "release=monitoring"
+```
+
+Describe pod (example for Grafana):
+
+```bash
+kubectl describe pod <grafana-pod-name> -n monitoring
+```
+
+Check mounted volume:
+
+```bash
+kubectl exec -it <grafana-pod-name> -n monitoring -- df -h
+```
+
+---
+
+## 7. Access Grafana Locally
+
+```bash
+export POD_NAME=$(kubectl --namespace monitoring get pod -l "app.kubernetes.io/name=grafana,app.kubernetes.io/instance=monitoring" -o name)
+kubectl --namespace monitoring port-forward $POD_NAME 3000
+```
+
+- Access Grafana: `http://localhost:3000`
+- Add **Loki datasource** with URL: `http://loki.monitoring:3100`
+
+> **Note:** If logs or namespaces don’t appear, restart or delete the pod.
+
+---
+
+### Summary:
+
+1. Create a gp3 StorageClass.
+2. Associate IAM OIDC provider for IRSA.
+3. Install AWS EBS CSI driver.
+4. Enable persistence for Prometheus, Grafana, and Alertmanager.
+5. Enable persistence for Loki.
+6. Verify volumes and pods.
+7. Access Grafana and configure Loki datasource.
+
+This guide ensures **all monitoring components in EKS have persistent storage**, so data is not lost if pods restart.
 
