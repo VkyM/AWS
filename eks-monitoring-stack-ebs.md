@@ -10,6 +10,7 @@ This guide explains how to deploy Prometheus, Grafana, and Loki on an Amazon EKS
 - **Helm 3** installed
 - **eksctl** and **kubectl** configured
 - IAM permissions to create roles and add-ons
+- We can install after create pvc, skip step1 and step2 (Recommended)
 
 ---
 
@@ -180,6 +181,21 @@ helm upgrade loki grafana/loki   --namespace monitoring   -f loki-values.yml
 kubectl --namespace monitoring get pods -l "release=monitoring"
 kubectl describe pod <grafana-pod-name> -n monitoring
 kubectl exec -it <grafana-pod-name> -n monitoring -- df -h
+```
+
+---
+
+## Step 9: Install prometheus-stack and loki with values (skip if already installed) 
+
+```bash
+helm install loki grafana/loki-stack \
+  -n monitoring \
+  -f loki-values.yaml
+
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --create-namespace \
+  -f prometheus-values.yaml
 ```
 
 ---
