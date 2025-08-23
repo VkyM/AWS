@@ -189,7 +189,7 @@ kubectl --namespace monitoring port-forward $POD_NAME 3000
 - Access Grafana: `http://localhost:3000`
 - Add **Loki datasource** with URL: `http://loki.monitoring:3100`
 
-> **Note:** If logs or namespaces don’t appear, restart or delete the pod.
+> **Note:** If logs or namespaces don’t appear, restart or delete the loki-0 pod.
 
 ---
 
