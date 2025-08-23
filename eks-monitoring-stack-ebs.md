@@ -98,6 +98,8 @@ If already installed, update add-on:
 aws eks delete-addon   --cluster-name dev-cluster   --addon-name aws-ebs-csi-driver   --region ap-south-1
 
 aws eks create-addon   --cluster-name dev-cluster   --addon-name aws-ebs-csi-driver   --service-account-role-arn arn:aws:iam::<ACCOUNT_ID>:role/dev-cluster-ebs-csi-controller-role   --region ap-south-1
+
+aws eks describe-addon   --cluster-name dev-cluster   --addon-name aws-ebs-csi-driver   --region ap-south-1   --query addon.status
 ```
 
 ---
